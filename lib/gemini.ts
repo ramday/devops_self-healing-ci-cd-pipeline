@@ -1,65 +1,53 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+
 /**
- * Analyzes CI/CD failure logs using the 2026 stable Gemini 3 Flash model.
- * Includes robust parsing and defensive error checks.
+ * Analyzes CI/CD logs with defensive checks and resilient JSON parsing.
  */
 export async function analyzeError(logs: string) {
-  // 1. Validation Check: Ensure API Key exists
+  // 1. Pre-flight check for API Key
   if (!process.env.GEMINI_API_KEY) {
-    console.error("[Gemini] GEMINI_API_KEY is missing.");
     return {
-      error: "AI Config Error",
-      file: "N/A",
-      suggestedFix: "Set GEMINI_API_KEY in Vercel environment variables."
+      error: "Configuration Error",
+      file: "Environment Variables",
+      suggestedFix: "GEMINI_API_KEY is not set in Vercel settings."
     };
   }
 
-  // 2. Validation Check: Ensure logs aren't empty
+  // 2. Pre-flight check for content
   if (!logs || logs.trim().length === 0) {
     return {
-      error: "Empty Log Input",
-      file: "N/A",
-      suggestedFix: "GitHub token may lack 'workflow' scope to read logs."
+      error: "Incomplete Data",
+      file: "GitHub Logs",
+      suggestedFix: "No logs were retrieved. Check if your PAT has 'workflow' scope."
     };
   }
 
+  const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
+
+  const prompt = `
+    Analyze these CI/CD logs. Identify the root cause and provide a fix.
+    Output ONLY valid JSON. 
+    FORMAT: {"error": "...", "file": "...", "suggestedFix": "..."}
+    LOGS: ${logs}
+  `;
+
   try {
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
-
-    const prompt = `
-      You are an SRE AI. Analyze these CI/CD logs, find the root cause, and fix it.
-      Output ONLY a valid JSON object. No markdown backticks.
-
-      LOGS:
-      ${logs}
-
-      JSON SCHEMA:
-      {
-        "error": "Short description of what broke",
-        "file": "path/to/broken/file",
-        "suggestedFix": "Full corrected file content"
-      }
-    `;
-
     const result = await model.generateContent(prompt);
-    const response = await result.response;
-    const text = response.text();
-
-    // 3. Resilient JSON Extraction (ignores conversational filler)
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error("AI response did not contain a valid JSON block.");
-
-    return JSON.parse(jsonMatch[0]);
-
-  } catch (error: any) {
-    console.error("[Gemini] Analysis failed:", error.message);
+    const text = result.response.text();
     
+    // 3. Extract JSON specifically to avoid markdown wrapper issues
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error("AI response was not valid JSON");
+    
+    return JSON.parse(jsonMatch[0]);
+  } catch (error: any) {
+    console.error("[Gemini] Pipeline Error:", error);
     return {
-      error: "AI Analysis Failed",
-      file: "System Logs",
-      suggestedFix: `Gemini Error: ${error.message || "Unknown error"}`
+      error: "Analysis Failed",
+      file: "N/A",
+      suggestedFix: `Error processing AI response: ${error.message}`
     };
   }
 }
