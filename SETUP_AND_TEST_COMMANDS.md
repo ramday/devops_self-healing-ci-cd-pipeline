@@ -75,6 +75,12 @@ NODE_ENV=development
 
 **Note:** Don't add PAT to .env.local - you'll connect via the UI instead!
 
+#### Deploy note (Vercel)
+
+If you're deploying to Vercel, you must also add `SESSION_PASSWORD` and `GITHUB_WEBHOOK_SECRET` in:
+
+Vercel Project → **Settings → Environment Variables** (at least for **Production**), then redeploy.
+
 ---
 
 ### STEP 3: Start Development Server

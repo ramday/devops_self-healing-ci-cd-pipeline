@@ -20,7 +20,9 @@ const SESSION_CONFIG: SessionOptions = {
 
 export async function getSession() {
   if (!SESSION_CONFIG.password) {
-    throw new Error('SESSION_PASSWORD environment variable is required');
+    throw new Error(
+      'Server misconfigured: SESSION_PASSWORD is not set. Add it to your deployment environment variables (e.g., Vercel Project Settings → Environment Variables) and redeploy.'
+    );
   }
 
   const cookieStore = await cookies();

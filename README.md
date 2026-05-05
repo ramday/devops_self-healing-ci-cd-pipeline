@@ -92,6 +92,19 @@ npm run dev
 
 Visit http://localhost:3000
 
+## 🚀 Deploying (Vercel)
+
+This app uses encrypted cookies (iron-session). In production you **must** set these environment variables in your hosting provider:
+
+- `SESSION_PASSWORD` (32+ chars; used to encrypt/decrypt the session cookie)
+- `GITHUB_WEBHOOK_SECRET` (used to verify GitHub webhook signatures)
+
+In Vercel:
+
+1. Project → **Settings** → **Environment Variables**
+2. Add both variables for **Production** (and **Preview** if you want preview deployments to work)
+3. Redeploy
+
 ## 📖 Core Components
 
 ### `/lib/session.ts`
