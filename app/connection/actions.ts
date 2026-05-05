@@ -2,7 +2,6 @@
 
 import { updateSession, getSession } from '@/lib/session';
 import { getRepositoryInfo } from '@/lib/github';
-import { redirect } from 'next/navigation';
 
 export async function connectRepository(
   pat: string,
