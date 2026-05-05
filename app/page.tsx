@@ -1,6 +1,6 @@
 import { getSession } from '@/lib/session';
 import { connectRepository, getRecentFailures, healFailure, disconnect } from './actions';
-import { redirect } from 'next/navigation';
+
 
 export default async function CommandCenter() {
   const session = await getSession();
