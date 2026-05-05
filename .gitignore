@@ -1,0 +1,27 @@
+# Next.js
+.next
+out
+dist
+*.log
+
+# Dependencies
+node_modules
+/.pnp
+.pnp.js
+/.npm-cache
+
+# Testing
+/coverage
+
+# Misc
+.DS_Store
+*.pem
+.env.local
+.env.*.local
+/ngrok*.zip
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
