@@ -29,13 +29,16 @@ export async function healFailure(runId: string, repoFullName: string) {
   try {
     const analysis = await kv.get<any>(`analysis:${runId}`);
     const pat = await kv.get<string>(repoFullName);
+    
+    if (!analysis || !pat) throw new Error("Missing analysis or PAT in KV");  // ← add this
+    
     const [owner, repo] = repoFullName.split('/');
     const result = await createFixPullRequest(pat, owner, repo, runId, analysis);
     if (result.success) prUrl = result.url;
   } catch (e) { console.error(e); }
   
   if (prUrl) redirect(prUrl);
-}
+}8
 
 export async function disconnect() {
   await updateSession({ isLoggedIn: false });
