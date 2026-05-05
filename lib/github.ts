@@ -417,14 +417,28 @@ export async function createFixPullRequest(
       repo,
       ref: 'heads/main',
     });
-
-    // 2. Create a new branch from main
-    await octokit.rest.git.createRef({
+// 2. Create a new branch from main (delete if already exists)
+try {
+  await octokit.rest.git.createRef({
+    owner,
+    repo,
+    ref: `refs/heads/${branchName}`,
+    sha: mainRef.object.sha,
+  });
+} catch (e: any) {
+  if (e.status === 422) {
+    // Branch exists — update it to point to latest main
+    await octokit.rest.git.updateRef({
       owner,
       repo,
-      ref: `refs/heads/${branchName}`,
+      ref: `heads/${branchName}`,
       sha: mainRef.object.sha,
+      force: true,
     });
+  } else {
+    throw e;
+  }
+}
 
     // 3. Get the SHA of the file we want to fix (required for update)
   // 3. Resolve wildcard path to actual file
