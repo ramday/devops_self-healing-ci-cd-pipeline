@@ -1,41 +1,41 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+// lib/gemini.ts
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-
-/**
- * Analyzes CI/CD logs to find the root cause and provide a fix.
- * Using the 2026 'gemini-flash-latest' alias to ensure stability.
- */
 export async function analyzeError(logs: string) {
-  // Use the alias to point to the current stable Flash model (Gemini 3 Flash)
+  // Always use the latest stable alias for Gemini 3
   const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
 
   const prompt = `
-    You are an expert DevOps and SRE engineer. 
-    Analyze the following CI/CD failure logs and identify the root cause.
-    Provide a concise suggested fix in the exact format required.
+    Analyze these CI/CD logs. Identify the root cause and provide a fix.
+    Output ONLY valid JSON. Do not include markdown formatting or backticks.
+
+    FORMAT:
+    {
+      "error": "description of error",
+      "file": "path/to/file",
+      "suggestedFix": "corrected code"
+    }
 
     LOGS:
     ${logs}
-
-    RESPONSE FORMAT (JSON ONLY):
-    {
-      "error": "Short description of the error",
-      "file": "Path to the broken file",
-      "suggestedFix": "The complete corrected code for that file"
-    }
   `;
 
   try {
     const result = await model.generateContent(prompt);
     const response = await result.response;
-    const text = response.text();
+    let text = response.text();
     
-    // Clean up any potential markdown backticks from Gemini
-    const jsonString = text.replace(/```json/g, "").replace(/```/g, "").trim();
-    return JSON.parse(jsonString);
+    // RESILIENT PARSING: Strips away ```json and ``` if Gemini adds them
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error("No JSON found in AI response");
+    
+    return JSON.parse(jsonMatch[0]);
   } catch (error) {
-    console.error("Gemini Analysis Error:", error);
-    throw error;
+    console.error("Gemini Parsing Error:", error);
+    // This is what is currently being saved to your KV:
+    return {
+      error: "AI analysis failed to format correctly.",
+      file: "Check logs",
+      suggestedFix: "Please check the workflow logs manually."
+    };
   }
 }
