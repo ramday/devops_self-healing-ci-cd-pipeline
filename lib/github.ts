@@ -256,10 +256,6 @@ export interface GitHubWebhookPayload {
 
 /**
  * Verify GitHub webhook signature
- * @param payload - Raw request body
- * @param signature - x-hub-signature-256 header value
- * @param secret - GITHUB_WEBHOOK_SECRET
- * @returns boolean - True if signature is valid
  */
 export function verifyWebhookSignature(
   payload: string,
@@ -271,7 +267,6 @@ export function verifyWebhookSignature(
     return false;
   }
 
-  // GitHub uses HMAC SHA256 with the format: sha256=<signature>
   const signaturePrefix = 'sha256=';
   if (!signature.startsWith(signaturePrefix)) {
     console.error('Invalid signature format');
@@ -283,7 +278,6 @@ export function verifyWebhookSignature(
   hmac.update(payload);
   const computedSignature = hmac.digest('hex');
 
-  // Use constant-time comparison to prevent timing attacks
   return crypto.timingSafeEqual(
     Buffer.from(signatureHex),
     Buffer.from(computedSignature)
@@ -291,10 +285,64 @@ export function verifyWebhookSignature(
 }
 
 /**
+ * Initialize Octokit client with PAT
+ */
+export function initializeOctokit(pat: string) {
+  return new Octokit({
+    auth: pat,
+  });
+}
+
+/**
+ * NEW: Fetch raw workflow logs for a specific run
+ */
+export async function getWorkflowLogs(
+  pat: string, 
+  owner: string, 
+  repo: string, 
+  runId: number
+): Promise<string> {
+  const octokit = initializeOctokit(pat);
+
+  try {
+    // 1. Get the jobs for the run to identify the failure
+    const { data: jobs } = await octokit.rest.actions.listJobsForWorkflowRun({
+      owner,
+      repo,
+      run_id: runId,
+    });
+
+    const failedJob = jobs.jobs.find(job => job.conclusion === 'failure');
+    if (!failedJob) return 'No failed job found in this run.';
+
+    // 2. Download the raw logs for that specific failed job
+    const { data: logs } = await octokit.rest.actions.downloadJobLogsForWorkflowRun({
+      owner,
+      repo,
+      job_id: failedJob.id,
+    });
+
+    return logs as string;
+  } catch (error) {
+    console.error('GitHub Log Retrieval Error:', error);
+    return 'Error: Could not retrieve logs from GitHub.';
+  }
+}
+
+/**
+ * NEW: Scrub logs to fit within AI context limits
+ */
+export function scrubLogs(logs: string, charLimit: number = 2500): string {
+  if (logs.length <= charLimit) return logs;
+  // We take the end of the logs because that's where the error stack trace usually is
+  return `... [Log Truncated] ...\n${logs.slice(-charLimit)}`;
+}
+
+/**
  * Extract repo information from webhook payload
  */
 export function extractRepoInfo(payload: GitHubWebhookPayload) {
-  const repo = payload.repository;
+  const repo = payload.repository || payload.workflow_run?.repository;
   const owner = repo?.owner?.login || 'unknown';
   const repoName = repo?.name || 'unknown';
 
@@ -313,15 +361,6 @@ export function isFailedWorkflowRun(payload: GitHubWebhookPayload): boolean {
     payload.action === 'completed' &&
     payload.workflow_run?.conclusion === 'failure'
   );
-}
-
-/**
- * Initialize Octokit client with PAT
- */
-export function initializeOctokit(pat: string) {
-  return new Octokit({
-    auth: pat,
-  });
 }
 
 /**

@@ -2,13 +2,14 @@
 
 import { updateSession, getSession } from '@/lib/session';
 import { getRepositoryInfo } from '@/lib/github';
+import { kv } from '@vercel/kv';
 
 export async function connectRepository(
   pat: string,
   repoUrl: string
 ): Promise<{ success: boolean; error?: string; repoName?: string }> {
   try {
-    // Validate inputs
+    // 1. Validate inputs
     if (!pat || pat.trim().length === 0) {
       return { success: false, error: 'Personal Access Token is required' };
     }
@@ -17,8 +18,7 @@ export async function connectRepository(
       return { success: false, error: 'Repository URL is required' };
     }
 
-    // Parse repository URL
-    // Support formats: https://github.com/owner/repo, github.com/owner/repo, owner/repo
+    // 2. Parse repository URL
     let owner: string;
     let repo: string;
 
@@ -36,17 +36,23 @@ export async function connectRepository(
 
     [, owner, repo] = match;
 
-    // Verify the repository exists and the PAT is valid
+    // 3. Verify the repository exists and the PAT is valid
     const repoInfo = await getRepositoryInfo(pat, owner, repo);
 
-    if (!repoInfo.success) {
+    if (!repoInfo.success || !repoInfo.data) {
       return {
         success: false,
         error: `Failed to access repository: ${repoInfo.error}`,
       };
     }
 
-    // Save to session
+    const repoFullName = repoInfo.data.fullName;
+
+    // 4. Save to Vercel KV (The "Bridge" for the Webhook)
+    // This allows the background webhook to access the token later
+    await kv.set(repoFullName, pat);
+
+    // 5. Save to session (For the frontend UI state)
     await updateSession({
       github_pat: pat,
       target_repo_url: repoUrl.trim(),
@@ -55,7 +61,7 @@ export async function connectRepository(
 
     return {
       success: true,
-      repoName: repoInfo.data?.fullName,
+      repoName: repoFullName,
     };
   } catch (error) {
     console.error('Error connecting repository:', error);
@@ -86,6 +92,18 @@ export async function getConnectionStatus() {
 
 export async function disconnectRepository() {
   try {
+    const session = await getSession();
+    
+    // Optional: Clean up KV storage on disconnect 
+    // (Note: This would prevent webhooks from working until re-connected)
+    /*
+    if (session.target_repo_url) {
+       const urlRegex = /(?:github\.com\/)([^\/]+\/[^\/]+?)(?:\.git)?$/;
+       const match = session.target_repo_url.match(urlRegex);
+       if (match) await kv.del(match[1]);
+    }
+    */
+
     await updateSession({
       github_pat: undefined,
       target_repo_url: undefined,
