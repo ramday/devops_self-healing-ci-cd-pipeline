@@ -1,5 +1,13 @@
 // lib/gemini.ts
 
+
+import { GoogleGenerativeAI } from '@google/generative-ai';
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+
+export async function analyzeError(logs: string) {
+  // ... rest of your code
+
 export async function analyzeError(logs: string) {
   // Always use the latest stable alias for Gemini 3
   const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
