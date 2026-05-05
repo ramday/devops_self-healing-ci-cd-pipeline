@@ -1,65 +1,42 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-/**
- * Analyzes CI/CD logs with built-in safety checks for API and formatting issues.
- */
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+
 export async function analyzeError(logs: string) {
-  // 1. Pre-flight Check: Environment
-  if (!process.env.GEMINI_API_KEY) {
-    console.error("[Gemini] API Key missing from environment.");
-    return fallbackResponse("Configuration Error: Missing GEMINI_API_KEY.");
+  const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
+
+  // 1. Check if logs are empty before sending to AI
+  if (!logs || logs.trim().length === 0) {
+    return {
+      error: "Empty Logs Received",
+      file: "N/A",
+      suggestedFix: "The GitHub PAT might lack 'workflow' permissions to read logs."
+    };
   }
 
-  // 2. Pre-flight Check: Input Data
-  if (!logs || logs.trim().length < 10) {
-    console.warn("[Gemini] Insufficient log data received.");
-    return fallbackResponse("Logs are empty or too short to analyze.");
-  }
+  const prompt = `
+    Analyze these CI/CD logs. Identify the root cause and provide a fix.
+    Output ONLY valid JSON.
+    FORMAT: {"error": "...", "file": "...", "suggestedFix": "..."}
+    LOGS: ${logs}
+  `;
 
   try {
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
-
-    const prompt = `
-      You are an SRE bot. Analyze these logs to find the root cause and a fix.
-      Output ONLY a valid JSON object. No markdown backticks.
-
-      LOGS:
-      ${logs}
-
-      JSON SCHEMA:
-      {
-        "error": "Brief cause",
-        "file": "path/to/broken/file",
-        "suggestedFix": "Full corrected content"
-      }
-    `;
-
     const result = await model.generateContent(prompt);
-    const text = result.response.text();
+    const response = await result.response;
+    const text = response.text();
     
-    // 3. Resilient JSON Parsing
     const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error("AI output was not in JSON format.");
+    if (!jsonMatch) throw new Error("AI response was not valid JSON");
     
     return JSON.parse(jsonMatch[0]);
-
   } catch (error: any) {
-    console.error("[Gemini] Analysis failed:", error.message);
-    
-    // Check for specific API errors (like quota or safety blocks)
-    const reason = error.message.includes("429") 
-      ? "AI Rate limit reached. Try again in a minute." 
-      : "Gemini was unable to process these specific logs.";
-      
-    return fallbackResponse(reason);
+    console.error("Gemini Error:", error);
+    // This will now show the REAL error on your dashboard
+    return {
+      error: "AI Analysis Error",
+      file: "Debug Information",
+      suggestedFix: `Error: ${error.message || "Unknown error"}. Check Vercel logs for /api/webhook.`
+    };
   }
-}
-
-function fallbackResponse(msg: string) {
-  return {
-    error: "Analysis Failed",
-    file: "N/A",
-    suggestedFix: msg
-  };
 }
