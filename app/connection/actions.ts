@@ -118,3 +118,47 @@ export async function disconnectRepository() {
     };
   }
 }
+
+// Add these to your existing app/actions.ts
+
+/**
+ * Fetches all failed analyses from the KV store
+ */
+export async function getRecentFailures() {
+  try {
+    const keys = await kv.keys('analysis:*');
+    if (keys.length === 0) return [];
+
+    const pipeline = kv.pipeline();
+    keys.forEach((key) => pipeline.get(key));
+    const results = await pipeline.exec();
+
+    // Combine keys (which contain the Run ID) with the analysis data
+    return keys.map((key, index) => ({
+      runId: key.replace('analysis:', ''),
+      ...(results[index] as object),
+    })).reverse(); // Newest first
+  } catch (error) {
+    console.error('Error fetching failures:', error);
+    return [];
+  }
+}
+
+/**
+ * Trigger the remediation flow
+ */
+export async function healFailure(runId: string, repoFullName: string) {
+  try {
+    const analysis = await kv.get<any>(`analysis:${runId}`);
+    const pat = await kv.get<string>(repoFullName);
+
+    if (!analysis || !pat) throw new Error("Missing data for healing");
+
+    const [owner, repo] = repoFullName.split('/');
+    const result = await createFixPullRequest(pat, owner, repo, runId, analysis);
+
+    return { success: true, url: result.url };
+  } catch (error) {
+    return { success: false, error: "Failed to create PR" };
+  }
+}
