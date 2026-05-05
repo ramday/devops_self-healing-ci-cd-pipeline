@@ -427,19 +427,29 @@ export async function createFixPullRequest(
     });
 
     // 3. Get the SHA of the file we want to fix (required for update)
-    const { data: fileData } = await octokit.rest.repos.getContent({
-      owner,
-      repo,
-      path: analysis.file,
-    });
+  // 3. Resolve wildcard path to actual file
+let filePath = analysis.file;
+if (filePath.includes('*')) {
+  const { data: workflowFiles } = await octokit.rest.repos.getContent({
+    owner, repo, path: '.github/workflows',
+  });
+  const firstWorkflow = (workflowFiles as any[]).find(f => f.name.endsWith('.yml') || f.name.endsWith('.yaml'));
+  if (!firstWorkflow) throw new Error('No workflow files found');
+  filePath = firstWorkflow.path;
+}
 
-    const fileSha = (fileData as any).sha;
+// 4. Get the SHA of the file we want to fix (required for update)
+const { data: fileData } = await octokit.rest.repos.getContent({
+  owner, repo, path: filePath,
+});
 
-    // 4. Update the file content on the new branch
-    await octokit.rest.repos.createOrUpdateFileContents({
-      owner,
-      repo,
-      path: analysis.file,
+const fileSha = (fileData as any).sha;
+
+// 5. Update the file content on the new branch
+await octokit.rest.repos.createOrUpdateFileContents({
+  owner,
+  repo,
+  path: filePath,
       message: `🔧 AI Fix for Run #${runId}: ${analysis.error}`,
       content: Buffer.from(analysis.suggestedFix).toString('base64'),
       branch: branchName,
