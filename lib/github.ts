@@ -48,14 +48,8 @@ export interface GitHubWebhookPayload {
       tree_id: string;
       message: string;
       timestamp: string;
-      author: {
-        name: string;
-        email: string;
-      };
-      committer: {
-        name: string;
-        email: string;
-      };
+      author: { name: string; email: string };
+      committer: { name: string; email: string };
     };
     repository: {
       id: number;
@@ -244,9 +238,7 @@ export interface GitHubWebhookPayload {
     id: number;
     name: string;
     full_name: string;
-    owner?: {
-      login: string;
-    };
+    owner?: { login: string };
   };
   sender?: {
     login: string;
@@ -254,9 +246,6 @@ export interface GitHubWebhookPayload {
   };
 }
 
-/**
- * Verify GitHub webhook signature
- */
 export function verifyWebhookSignature(
   payload: string,
   signature: string,
@@ -266,62 +255,41 @@ export function verifyWebhookSignature(
     console.error('GITHUB_WEBHOOK_SECRET is not set');
     return false;
   }
-
   const signaturePrefix = 'sha256=';
   if (!signature.startsWith(signaturePrefix)) {
     console.error('Invalid signature format');
     return false;
   }
-
   const signatureHex = signature.substring(signaturePrefix.length);
   const hmac = crypto.createHmac('sha256', secret);
   hmac.update(payload);
   const computedSignature = hmac.digest('hex');
-
   return crypto.timingSafeEqual(
     Buffer.from(signatureHex),
     Buffer.from(computedSignature)
   );
 }
 
-/**
- * Initialize Octokit client with PAT
- */
 export function initializeOctokit(pat: string) {
-  return new Octokit({
-    auth: pat,
-  });
+  return new Octokit({ auth: pat });
 }
 
-/**
- * NEW: Fetch raw workflow logs for a specific run
- */
 export async function getWorkflowLogs(
-  pat: string, 
-  owner: string, 
-  repo: string, 
+  pat: string,
+  owner: string,
+  repo: string,
   runId: number
 ): Promise<string> {
   const octokit = initializeOctokit(pat);
-
   try {
-    // 1. Get the jobs for the run to identify the failure
     const { data: jobs } = await octokit.rest.actions.listJobsForWorkflowRun({
-      owner,
-      repo,
-      run_id: runId,
+      owner, repo, run_id: runId,
     });
-
     const failedJob = jobs.jobs.find(job => job.conclusion === 'failure');
     if (!failedJob) return 'No failed job found in this run.';
-
-    // 2. Download the raw logs for that specific failed job
     const { data: logs } = await octokit.rest.actions.downloadJobLogsForWorkflowRun({
-      owner,
-      repo,
-      job_id: failedJob.id,
+      owner, repo, job_id: failedJob.id,
     });
-
     return logs as string;
   } catch (error) {
     console.error('GitHub Log Retrieval Error:', error);
@@ -329,23 +297,15 @@ export async function getWorkflowLogs(
   }
 }
 
-/**
- * NEW: Scrub logs to fit within AI context limits
- */
 export function scrubLogs(logs: string, charLimit: number = 2500): string {
   if (logs.length <= charLimit) return logs;
-  // We take the end of the logs because that's where the error stack trace usually is
   return `... [Log Truncated] ...\n${logs.slice(-charLimit)}`;
 }
 
-/**
- * Extract repo information from webhook payload
- */
 export function extractRepoInfo(payload: GitHubWebhookPayload) {
   const repo = payload.repository || payload.workflow_run?.repository;
   const owner = repo?.owner?.login || 'unknown';
   const repoName = repo?.name || 'unknown';
-
   return {
     owner,
     repo: repoName,
@@ -353,9 +313,6 @@ export function extractRepoInfo(payload: GitHubWebhookPayload) {
   };
 }
 
-/**
- * Check if the webhook is a failed workflow run
- */
 export function isFailedWorkflowRun(payload: GitHubWebhookPayload): boolean {
   return (
     payload.action === 'completed' &&
@@ -363,18 +320,10 @@ export function isFailedWorkflowRun(payload: GitHubWebhookPayload): boolean {
   );
 }
 
-/**
- * Get repository information from GitHub API
- */
 export async function getRepositoryInfo(pat: string, owner: string, repo: string) {
   const octokit = initializeOctokit(pat);
-  
   try {
-    const response = await octokit.rest.repos.get({
-      owner,
-      repo,
-    });
-
+    const response = await octokit.rest.repos.get({ owner, repo });
     return {
       success: true,
       data: {
@@ -394,12 +343,39 @@ export async function getRepositoryInfo(pat: string, owner: string, repo: string
   }
 }
 
-
-// Add these to your existing lib/github.ts
-
 /**
- * Creates a Pull Request with the AI's suggested fix
+ * Resolves the actual workflow file path from the repo,
+ * ignoring whatever (possibly wrong) filename Gemini returned.
+ * Matches by the workflow file that triggered the failing run if possible,
+ * otherwise falls back to the first .yml file found.
  */
+async function resolveWorkflowFilePath(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  hintPath: string
+): Promise<string> {
+  try {
+    const { data: entries } = await octokit.rest.repos.getContent({
+      owner, repo, path: '.github/workflows',
+    });
+    const files = (entries as any[]).filter(
+      f => f.type === 'file' && (f.name.endsWith('.yml') || f.name.endsWith('.yaml'))
+    );
+    if (files.length === 0) throw new Error('No workflow files found in .github/workflows');
+
+    // Try to match the hint filename against real files (handles main.yml → ci.yml mismatches)
+    const hintName = hintPath.split('/').pop()?.toLowerCase() || '';
+    const matched = files.find(f => f.name.toLowerCase() === hintName);
+    
+    // Return matched file if found, otherwise first file in directory
+    return matched ? matched.path : files[0].path;
+  } catch {
+    // If directory listing fails entirely, return the hint as last resort
+    return hintPath;
+  }
+}
+
 export async function createFixPullRequest(
   pat: string,
   owner: string,
@@ -410,79 +386,61 @@ export async function createFixPullRequest(
   const octokit = new Octokit({ auth: pat });
   const branchName = `gemini-fix-${runId}`;
 
+  // 1. Get SHA of main branch
+  const { data: mainRef } = await octokit.rest.git.getRef({
+    owner, repo, ref: 'heads/main',
+  });
+  const mainSha = mainRef.object.sha;
+
+  // 2. Create branch, or force-reset it if it already exists
   try {
-    // 1. Get the SHA of the main branch
-    const { data: mainRef } = await octokit.rest.git.getRef({
-      owner,
-      repo,
-      ref: 'heads/main',
+    await octokit.rest.git.createRef({
+      owner, repo,
+      ref: `refs/heads/${branchName}`,
+      sha: mainSha,
     });
-// 2. Create a new branch from main (delete if already exists)
-try {
-  await octokit.rest.git.createRef({
-    owner,
-    repo,
-    ref: `refs/heads/${branchName}`,
-    sha: mainRef.object.sha,
-  });
-} catch (e: any) {
-  if (e.status === 422) {
-    // Branch exists — update it to point to latest main
-    await octokit.rest.git.updateRef({
-      owner,
-      repo,
-      ref: `heads/${branchName}`,
-      sha: mainRef.object.sha,
-      force: true,
-    });
-  } else {
-    throw e;
+  } catch (e: any) {
+    if (e.status === 422) {
+      await octokit.rest.git.updateRef({
+        owner, repo,
+        ref: `heads/${branchName}`,
+        sha: mainSha,
+        force: true,
+      });
+    } else {
+      throw e;
+    }
   }
-}
 
-    // 3. Get the SHA of the file we want to fix (required for update)
-  // 3. Resolve wildcard path to actual file
-let filePath = analysis.file;
-if (filePath.includes('*')) {
-  const { data: workflowFiles } = await octokit.rest.repos.getContent({
-    owner, repo, path: '.github/workflows',
+  // 3. Always resolve the real workflow file path from the repo
+  //    Never trust Gemini's filename blindly
+  const filePath = await resolveWorkflowFilePath(octokit, owner, repo, analysis.file);
+  console.log(`[GitHub] Resolved file path: ${filePath} (Gemini suggested: ${analysis.file})`);
+
+  // 4. Get current file SHA (required by GitHub API to update a file)
+  const { data: fileData } = await octokit.rest.repos.getContent({
+    owner, repo, path: filePath,
   });
-  const firstWorkflow = (workflowFiles as any[]).find(f => f.name.endsWith('.yml') || f.name.endsWith('.yaml'));
-  if (!firstWorkflow) throw new Error('No workflow files found');
-  filePath = firstWorkflow.path;
-}
+  const fileSha = (fileData as any).sha;
 
-// 4. Get the SHA of the file we want to fix (required for update)
-const { data: fileData } = await octokit.rest.repos.getContent({
-  owner, repo, path: filePath,
-});
+  // 5. Commit the AI fix to the new branch
+  await octokit.rest.repos.createOrUpdateFileContents({
+    owner, repo,
+    path: filePath,
+    message: `🔧 AI Fix for Run #${runId}: ${analysis.error}`,
+    content: Buffer.from(analysis.suggestedFix).toString('base64'),
+    branch: branchName,
+    sha: fileSha,
+  });
 
-const fileSha = (fileData as any).sha;
+  // 6. Open the Pull Request
+  const { data: pr } = await octokit.rest.pulls.create({
+    owner, repo,
+    title: `🔧 Self-Healing: Fix failure in ${filePath}`,
+    head: branchName,
+    base: 'main',
+    body: `### 🤖 AI-Generated Fix\n\n**Error Identified:** ${analysis.error}\n**File Modified:** \`${filePath}\`\n\nThis PR was automatically generated by the Self-Healing CI/CD pipeline after analyzing the logs for run #${runId}.`,
+  });
 
-// 5. Update the file content on the new branch
-await octokit.rest.repos.createOrUpdateFileContents({
-  owner,
-  repo,
-  path: filePath,
-      message: `🔧 AI Fix for Run #${runId}: ${analysis.error}`,
-      content: Buffer.from(analysis.suggestedFix).toString('base64'),
-      branch: branchName,
-      sha: fileSha,
-    });
-
-    // 5. Create the Pull Request
-    const { data: pr } = await octokit.rest.pulls.create({
-      owner,
-      repo,
-      title: `🔧 Self-Healing: Resolve failure in ${analysis.file}`,
-      head: branchName,
-      base: 'main',
-      body: `### 🤖 AI-Generated Fix\n\n**Error Identified:** ${analysis.error}\n**File:** ${analysis.file}\n\nThis PR was automatically generated by the Self-Healing CI/CD tool after analyzing the logs for run #${runId}.`,
-    });
-
-    return { success: true, url: pr.html_url };
-  } catch (error) {
-    console.error('GitHub Remediation Error:', error);
-    throw error;
-  }
+  return { success: true, url: pr.html_url };
 }
