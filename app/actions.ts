@@ -9,15 +9,12 @@ import { redirect } from 'next/navigation';
 export async function connectRepository(formData: FormData) {
   const pat = formData.get('pat') as string;
   const url = formData.get('url') as string;
-  
   const urlRegex = /(?:github\.com\/)([^\/]+\/[^\/]+?)(?:\.git)?$/;
   const match = url.trim().match(urlRegex);
   if (!match) return;
-  
   const repoFullName = match[1];
   const [owner, repo] = repoFullName.split('/');
   const repoInfo = await getRepositoryInfo(pat, owner, repo);
-
   if (repoInfo.success) {
     await kv.set(repoFullName, pat);
     await updateSession({ github_pat: pat, target_repo_url: url.trim(), isLoggedIn: true });
@@ -27,26 +24,14 @@ export async function connectRepository(formData: FormData) {
 
 export async function healFailure(runId: string, repoFullName: string) {
   let prUrl: string | null = null;
-
   try {
     const analysis = await kv.get<any>(`analysis:${runId}`);
     const pat = await kv.get<string>(repoFullName);
-
-    if (!analysis || !pat) throw new Error("Missing data");
-
     const [owner, repo] = repoFullName.split('/');
     const result = await createFixPullRequest(pat, owner, repo, runId, analysis);
-    
-    if (result.success && result.url) {
-      prUrl = result.url;
-    }
-  } catch (error) {
-    console.error('Healing failed:', error);
-  }
-
-  if (prUrl) {
-    redirect(prUrl);
-  }
+    if (result.success) prUrl = result.url;
+  } catch (e) { console.error(e); }
+  if (prUrl) redirect(prUrl);
 }
 
 export async function disconnect() {
@@ -55,17 +40,23 @@ export async function disconnect() {
 }
 
 export async function getRecentFailures() {
-  try {
-    const keys = await kv.keys('analysis:*');
-    if (keys.length === 0) return [];
+  const keys = await kv.keys('analysis:*');
+  if (keys.length === 0) return [];
+  const pipeline = kv.pipeline();
+  keys.forEach(k => pipeline.get(k));
+  const results = await pipeline.exec();
+  return keys.map((k, i) => ({ runId: k.split(':')[1], ...(results[i] as any) })).reverse();
+}
+
+/**
+ * NEW: Clears all saved analyses to remove stale data
+ */
+export async function clearCache() {
+  const keys = await kv.keys('analysis:*');
+  if (keys.length > 0) {
     const pipeline = kv.pipeline();
-    keys.forEach((key) => pipeline.get(key));
-    const results = await pipeline.exec();
-    return keys.map((key, i) => ({ 
-      runId: key.split(':')[1], 
-      ...(results[i] as any) 
-    })).reverse();
-  } catch (e) {
-    return [];
+    keys.forEach(k => pipeline.del(k));
+    await pipeline.exec();
   }
+  revalidatePath('/');
 }
