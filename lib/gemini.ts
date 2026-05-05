@@ -1,15 +1,10 @@
-// lib/gemini.ts
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
-
-import { GoogleGenerativeAI } from '@google/generative-ai';
-
+// 1. Initialize the Google Generative AI client
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
 export async function analyzeError(logs: string) {
-  // ... rest of your code
-
-export async function analyzeError(logs: string) {
-  // Always use the latest stable alias for Gemini 3
+  // 2. Use the stable 'gemini-flash-latest' alias (Gemini 3 Flash)
   const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
 
   const prompt = `
@@ -32,14 +27,13 @@ export async function analyzeError(logs: string) {
     const response = await result.response;
     let text = response.text();
     
-    // RESILIENT PARSING: Strips away ```json and ``` if Gemini adds them
+    // 3. Extract JSON using a regex to ignore any potential conversational filler
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error("No JSON found in AI response");
     
     return JSON.parse(jsonMatch[0]);
   } catch (error) {
     console.error("Gemini Parsing Error:", error);
-    // This is what is currently being saved to your KV:
     return {
       error: "AI analysis failed to format correctly.",
       file: "Check logs",
