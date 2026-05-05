@@ -209,4 +209,4 @@ function FailureCard({ fail, repoFullName }: { fail: any; repoFullName: string }
       </div>
     </div>
   );
-}s
+}
