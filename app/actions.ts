@@ -38,7 +38,7 @@ export async function healFailure(runId: string, repoFullName: string) {
   } catch (e) { console.error(e); }
   
   if (prUrl) redirect(prUrl);
-}8
+}
 
 export async function disconnect() {
   await updateSession({ isLoggedIn: false });
