@@ -3,6 +3,7 @@
 import { updateSession, getSession } from '@/lib/session';
 import { getRepositoryInfo } from '@/lib/github';
 import { kv } from '@vercel/kv';
+import { createFixPullRequest } from '@/lib/github'; // Add this if it's missing!
 
 export async function connectRepository(
   pat: string,

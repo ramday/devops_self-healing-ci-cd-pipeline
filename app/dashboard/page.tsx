@@ -1,4 +1,4 @@
-import { getRecentFailures, healFailure } from '@/app/actions';
+import { getRecentFailures, healFailure } from '@/app/connection/actions';
 import { getSession } from '@/lib/session';
 import { redirect } from 'next/navigation';
 
